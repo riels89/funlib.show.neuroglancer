@@ -6,6 +6,10 @@ import neuroglancer
 import os
 import webbrowser
 import numpy as np
+import logging
+import traceback
+
+logging.basicConfig(level=logging.DEBUG)
 
 parser = argparse.ArgumentParser()
 parser.add_argument(
@@ -21,6 +25,13 @@ parser.add_argument(
     nargs='+',
     action='append',
     help="The datasets in the container to show")
+parser.add_argument(
+    '--add_2d_dim',
+    '-a',
+    default=False,
+    type=str,
+    nargs='+',
+    help="If set, when given 2d data add an extra dim to use as the 3rd dim")
 parser.add_argument(
     '--graphs',
     '-g',
@@ -38,18 +49,45 @@ parser.add_argument(
     help="If set, do not open a browser, just pring a URL")
 
 args = parser.parse_args()
-
 neuroglancer.set_server_bind_address('0.0.0.0')
 viewer = neuroglancer.Viewer()
+print(args.add_2d_dim)
+
+if len(args.add_2d_dim) == 1:
+    args.add_2d_dim = args.add_2d_dim * len(args.datasets) 
+print(args.add_2d_dim)
+
+def insert_dim(a, s, dim=0):
+    return a[:dim] + (s, ) + a[dim:]
 
 for f, datasets in zip(args.file, args.datasets):
 
     arrays = []
-    for ds in datasets:
+    for i, ds in enumerate(datasets):
         try:
 
             print("Adding %s, %s" % (f, ds))
             a = daisy.open_ds(f, ds)
+
+            if a.roi.dims() == 2:
+                print("ROI is 2D, Adding fake 3rd dimension")
+                print(a.data.shape)
+                print(args.add_2d_dim[i])
+                print(i)
+                if args.add_2d_dim[i] == 'true':
+                    a.data = np.expand_dims(np.array(a.data), axis=-3)
+                    print(args.add_2d_dim[i])
+                    print("expanding")
+
+                a.roi = daisy.Roi(
+                    insert_dim(a.roi.get_begin(), 0),
+                    insert_dim(a.roi.get_shape(), a.data.shape[-3]))
+                a.voxel_size = insert_dim(a.voxel_size, 1)
+                print(a.roi)
+                print(a.data.shape)
+
+            #if a.dtype != np.float32:
+            #    a.data = np.array(a.data).astype(np.float32)
 
             if a.roi.dims() == 4:
                 print("ROI is 4D, stripping first dimension and treat as channels")
@@ -60,8 +98,9 @@ for f, datasets in zip(args.file, args.datasets):
                 print("Converting dtype in memory...")
                 a.data = a.data[:].astype(np.uint64)
 
-        except:
-
+        except Exception as e:
+            print(e)
+            traceback.print_exc()
             print("Didn't work, checking if this is multi-res...")
 
             scales = glob.glob(os.path.join(f, ds, 's*'))
@@ -106,7 +145,7 @@ if args.graphs:
                 s.layers.append(name='graph', layer=graph_layer)
 
 url = str(viewer)
-print(url)
+print("http://localhost:" + url.split(':')[2])
 if os.environ.get("DISPLAY") and not args.no_browser:
     webbrowser.open_new(url)
 
